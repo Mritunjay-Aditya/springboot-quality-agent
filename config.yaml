@@ -1,0 +1,7 @@
+coverage_threshold: 0.80
+command_timeout_seconds: 900
+java_version: "21"
+groq_model: openai/gpt-oss-120b
+test_source_root: src/test/java
+integration_tests: false
+quality_report: quality-report.json
