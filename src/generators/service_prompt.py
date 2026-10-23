@@ -5,6 +5,11 @@ Use only classes, methods, constructors, fields, and packages shown in the sourc
 and project inventory. Do not invent types or methods. Do not call private
 methods. Use the exact package declarations and imports from the source. If a
 dependency is not listed, do not reference it.
+Spring Data repositories have overloaded methods. Always use typed Mockito
+matchers for overloaded calls: use `any(Sort.class)` for `findAll(Sort)`, never
+plain `any()`. For verification, use an explicit `Sort` variable or
+`ArgumentMatchers.<Sort>argThat(...)`, never an untyped `argThat(...)` for
+`findAll`; use the exact argument type for other overloaded methods.
 
 PROJECT INVENTORY:
 {project_context}

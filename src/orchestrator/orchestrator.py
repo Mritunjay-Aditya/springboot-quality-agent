@@ -39,10 +39,12 @@ class QualityOrchestrator:
         scanned = scan_project(self.project_path)
         inventory = "\n".join(
             f"- {java_class.package}.{java_class.name}: "
+            f"kind={java_class.kind}; "
             f"annotations={java_class.annotations}; "
             f"imports={java_class.imports}; "
             f"methods={[method.name for method in java_class.methods]}; "
-            f"fields={[field['type'] + ' ' + field['name'] for field in java_class.fields]}"
+            f"fields={[field['type'] + ' ' + field['name'] for field in java_class.fields]}; "
+            f"constructor={'(' + ', '.join(field['type'] for field in java_class.fields) + ')' if java_class.kind == 'record' else 'not inferred'}"
             for java_class, _ in scanned
         )
         self.generator.project_context = inventory
@@ -63,6 +65,54 @@ class QualityOrchestrator:
                         self.project_path, java_class, content, integration=True
                     )))
         return generated
+
+    @staticmethod
+    def _summary(report: dict[str, Any]) -> dict[str, Any]:
+        execution = report["execution_results"]
+        test_result = execution.get("mvn_clean_test", {})
+        verify_result = execution.get("mvn_clean_verify", {})
+        coverage = report.get("coverage", {})
+        pit = report.get("pit_results", {})
+        sonar = report.get("sonar_results", {})
+        return {
+            "status": (
+                "passed"
+                if test_result.get("return_code") == 0
+                and verify_result.get("return_code") == 0
+                and pit.get("return_code") == 0
+                and sonar.get("return_code") == 0
+                else "completed_with_failures"
+            ),
+            "message": (
+                "Quality analysis completed successfully."
+                if test_result.get("return_code") == 0
+                and verify_result.get("return_code") == 0
+                and pit.get("return_code") == 0
+                and sonar.get("return_code") == 0
+                else "Quality analysis completed with one or more failed or skipped stages. See stage_results."
+            ),
+            "stage_results": {
+                "tests": "passed" if test_result.get("return_code") == 0 else "failed",
+                "verification": (
+                    "passed" if verify_result.get("return_code") == 0
+                    else "skipped" if verify_result.get("skipped") else "failed"
+                ),
+                "coverage": (
+                    f"{coverage['counters']['instruction']['percentage']:.1%}"
+                    if coverage.get("available") and coverage.get("counters", {}).get("instruction")
+                    else "unavailable"
+                ),
+                "pit": "passed" if pit.get("return_code") == 0 else "skipped" if pit.get("skipped") else "failed",
+                "sonar": "passed" if sonar.get("return_code") == 0 else "skipped" if sonar.get("skipped") else "failed",
+            },
+            "next_action": (
+                "Review quality-report.json for details."
+                if sonar.get("return_code") == 0
+                else "Configure SONAR_HOST_URL and SONAR_TOKEN, then rerun the analysis."
+                if sonar.get("return_code") is not None
+                else "Fix the failed prerequisite stage and rerun the analysis."
+            ),
+        }
 
     def run(self) -> dict[str, Any]:
         report: dict[str, Any] = {
@@ -88,6 +138,7 @@ class QualityOrchestrator:
                     "available": False,
                     "error": "Maven verify failed; JaCoCo report is not trustworthy",
                 }
+                report["summary"] = self._summary(report)
                 write_report(self.project_path, report)
                 return report
         else:
@@ -98,6 +149,7 @@ class QualityOrchestrator:
             report["pit_results"] = {"skipped": True, "reason": "Maven tests failed"}
             report["sonar_results"] = {"skipped": True, "reason": "Maven tests failed"}
             report["coverage"] = {"available": False, "error": "Maven tests failed"}
+            report["summary"] = self._summary(report)
             write_report(self.project_path, report)
             return report
         report["coverage"] = parse_report(self.project_path / "target" / "site" / "jacoco" / "jacoco.xml")
@@ -134,11 +186,13 @@ class QualityOrchestrator:
                 if regeneration_result.return_code != 0:
                     report["pit_results"] = {"skipped": True, "reason": "Regenerated tests failed"}
                     report["sonar_results"] = {"skipped": True, "reason": "Regenerated tests failed"}
+                    report["summary"] = self._summary(report)
                     write_report(self.project_path, report)
                     return report
         pit_result = run_pit(self.project_path, timeout)
         report["pit_results"] = vars(pit_result)
         sonar_result = run_sonar(self.project_path, timeout)
         report["sonar_results"] = vars(sonar_result)
+        report["summary"] = self._summary(report)
         write_report(self.project_path, report)
         return report

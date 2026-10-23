@@ -38,7 +38,20 @@ def health() -> dict[str, str]:
 def generate_tests(request: ProjectRequest) -> dict[str, Any]:
     orchestrator = _orchestrator(request.project_path)
     paths = orchestrator.generate_tests()
-    return {"tests_generated": paths, "generation_errors": orchestrator.generation_errors}
+    return {
+        "status": "passed" if not orchestrator.generation_errors else "completed_with_errors",
+        "message": (
+            f"Generated {len(paths)} test file(s)."
+            if not orchestrator.generation_errors
+            else f"Generated {len(paths)} test file(s), but some files were rejected."
+        ),
+        "tests_generated": paths,
+        "generation_errors": orchestrator.generation_errors,
+        "next_action": (
+            "Run Maven tests in the target project before full analysis."
+            if paths else "Review generation_errors and the target project's source."
+        ),
+    }
 
 
 @app.post("/analyze")

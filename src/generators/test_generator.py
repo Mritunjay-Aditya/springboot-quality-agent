@@ -31,6 +31,35 @@ def _validate_java_test(content: str, class_name: str) -> None:
         raise ValueError(f"Generated test for {class_name} has unbalanced braces")
 
 
+def _validate_record_constructors(content: str, project_context: str) -> None:
+    for match in re.finditer(
+        r"-\s+[\w.]+\.(?P<name>[A-Za-z_$][\w$]*):\s+kind=record;.*?"
+        r"constructor=\((?P<components>[^)]*)\)",
+        project_context,
+    ):
+        if match.group("components").strip() and re.search(
+            rf"\bnew\s+{re.escape(match.group('name'))}\s*\(\s*\)",
+            content,
+        ):
+            raise ValueError(
+                f"Generated test calls record {match.group('name')} with no arguments; "
+                "use its canonical constructor"
+            )
+
+
+def _validate_overloaded_repository_matchers(content: str) -> None:
+    if re.search(r"\.findAll\s*\(\s*any\s*\(\s*\)\s*\)", content):
+        raise ValueError(
+            "Generated test uses untyped any() for overloaded repository findAll; "
+            "use any(Sort.class) or another exact argument type"
+        )
+    if re.search(r"\.findAll\s*\(\s*argThat\s*\(", content):
+        raise ValueError(
+            "Generated test uses untyped argThat for overloaded repository findAll; "
+            "use an explicit Sort variable or ArgumentMatchers.<Sort>argThat(...)"
+        )
+
+
 class TestGenerator:
     def __init__(self, client: GroqClient, project_context: str = "", max_attempts: int = 2) -> None:
         self.client = client
@@ -50,6 +79,8 @@ class TestGenerator:
             content = _strip_markdown(self.client.generate(prompt + retry))
             try:
                 _validate_java_test(content, class_name)
+                _validate_record_constructors(content, self.project_context)
+                _validate_overloaded_repository_matchers(content)
                 return content
             except ValueError as exc:
                 last_error = exc

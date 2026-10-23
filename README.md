@@ -113,8 +113,19 @@ The prompt includes the target class source, imports, fields, methods,
 annotations, and a project inventory. The prompt explicitly instructs the
 model not to invent classes, methods, packages, or imports. Returned output is
 checked for a package declaration, the expected test class, balanced braces,
-and removal of Markdown fences. Invalid output is retried within a bounded
-limit and then recorded in `generation_errors` instead of being written.
+and removal of Markdown fences. Java records are parsed separately and their
+canonical constructor components are included in the inventory. A
+deterministic guard rejects generated calls that omit required record
+components, then retries the generation. Invalid output is
+retried within a bounded limit and then recorded in `generation_errors` instead
+of being written.
+
+For Spring Data repository overloads, generated Mockito matchers are required
+to be typed. For example, a service calling `findAll(Sort)` must use
+`any(Sort.class)` for stubbing and an explicit `Sort` variable or
+`ArgumentMatchers.<Sort>argThat(...)` for verification. Untyped `any()` and
+`argThat(...)` can make `findAll(Sort)` and `findAll(Example)` ambiguous to
+`javac`.
 
 ## Prerequisites
 
@@ -164,13 +175,19 @@ Edit `.env`:
 
 ```env
 GROQ_API_KEY=your-groq-api-key
+SONAR_HOST_URL=http://localhost:9000
+SONAR_TOKEN=your-sonarqube-token
 ```
 
-The application loads `.env` relative to the quality-agent project. The file
-is ignored by Git. If using a shell variable instead:
+The application loads `.env` relative to the quality-agent project. Both Groq
+and Sonar settings are available to the agent's Maven subprocesses. The file
+is ignored by Git. Replace `your-sonarqube-token` with a token generated in
+SonarQube. If using shell variables instead:
 
 ```powershell
 $env:GROQ_API_KEY = "your-groq-api-key"
+$env:SONAR_HOST_URL = "http://localhost:9000"
+$env:SONAR_TOKEN = "your-sonarqube-token"
 ```
 
 Set the variable before starting Uvicorn. Do not commit or paste real API keys
@@ -210,14 +227,14 @@ Expected response:
 A Windows backslash is an escape character in JSON. This is invalid:
 
 ```json
-{"project_path":"F:\UPI_Without_Internet"}
+{"project_path":"C:\work\my-spring-app"}
 ```
 
 Use PowerShell's JSON serializer to avoid escaping mistakes:
 
 ```powershell
 $body = @{
-  project_path = "F:\UPI_Without_Internet"
+  project_path = "C:\work\my-spring-app"
 } | ConvertTo-Json
 ```
 
@@ -228,7 +245,7 @@ full quality pipeline:
 
 ```powershell
 $body = @{
-  project_path = "F:\UPI_Without_Internet"
+  project_path = "C:\work\my-spring-app"
 } | ConvertTo-Json
 
 Invoke-RestMethod `
@@ -251,7 +268,7 @@ using the complete pipeline.
 
 ```powershell
 $body = @{
-  project_path = "F:\UPI_Without_Internet"
+  project_path = "C:\work\my-spring-app"
 } | ConvertTo-Json
 
 Invoke-RestMethod `
@@ -293,7 +310,7 @@ with `coverage_threshold` from `config.yaml`.
 To open the HTML report manually after a successful build:
 
 ```powershell
-Start-Process "F:\UPI_Without_Internet\target\site\jacoco\index.html"
+Start-Process "C:\work\my-spring-app\target\site\jacoco\index.html"
 ```
 
 If the file does not exist, inspect the Maven result first. A failed
@@ -331,17 +348,24 @@ Sonar runs:
 mvn sonar:sonar
 ```
 
-Configure the Sonar server URL and authentication through normal Maven/Sonar
-properties, `settings.xml`, or environment configuration. The agent does not
-store Sonar credentials. Sonar output and its return code are preserved in
-the report.
+Configure Sonar before starting Uvicorn:
+
+```powershell
+$env:SONAR_HOST_URL = "http://localhost:9000"
+$env:SONAR_TOKEN = "your-sonar-token"
+```
+
+The agent passes `SONAR_HOST_URL` to Maven and keeps `SONAR_TOKEN` in the
+subprocess environment. The token is not added to the command or report.
+Sonar output and its return code are preserved in the report. Restart Uvicorn
+after changing these values.
 
 ## Report format
 
 The final report is written to the target project, for example:
 
 ```text
-F:\UPI_Without_Internet\quality-report.json
+C:\work\my-spring-app\quality-report.json
 ```
 
 The top-level shape is:
@@ -350,6 +374,7 @@ The top-level shape is:
 {
   "tests_generated": [],
   "generation_errors": [],
+  "summary": {},
   "coverage": {},
   "pit_results": {},
   "sonar_results": {},
@@ -366,6 +391,9 @@ Important fields:
 - `sonar_results`: Sonar command, output, return code, or skip reason.
 - `execution_results`: Maven results, missing plugin warnings, and
   regeneration results.
+- `summary`: an easy-to-read status, result for each stage, coverage
+  percentage, and recommended next action.
+- `summary`: plain-English overall status, stage results, and next action.
 
 Command results include the command, return code, standard output, standard
 error, and timeout status. Coverage values are decimals: `0.80` means 80%.
@@ -380,13 +408,19 @@ The request body is not valid JSON because a Windows path contains unescaped
 backslashes. Use `ConvertTo-Json`, as shown above. In raw JSON, use:
 
 ```json
-{"project_path":"F:\\UPI_Without_Internet"}
+{"project_path":"C:\\work\\my-spring-app"}
 ```
 
 ### `GROQ_API_KEY is required`
 
 Create `.env` from `.env.example`, set the key, and restart Uvicorn. Existing
 server processes do not automatically reload environment changes.
+
+### SonarQube authentication fails
+
+Set `SONAR_HOST_URL` and `SONAR_TOKEN` in the same PowerShell session used to
+start Uvicorn, then restart the server. A successful run reports
+`summary.stage_results.sonar` as `passed`.
 
 ### Maven cannot be found
 

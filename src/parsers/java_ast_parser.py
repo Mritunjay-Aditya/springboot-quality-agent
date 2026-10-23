@@ -3,6 +3,7 @@ from pathlib import Path
 from typing import Any
 
 import javalang
+import re
 
 
 @dataclass
@@ -29,6 +30,7 @@ class JavaClass:
     methods: list[JavaMethod]
     source: str = ""
     imports: list[str] = field(default_factory=list)
+    kind: str = "class"
 
 
 def _type_name(type_node: Any) -> str:
@@ -49,7 +51,40 @@ def _annotation_names(annotations: Any) -> list[str]:
 
 def parse_java_file(path: Path) -> JavaClass:
     source = path.read_text(encoding="utf-8")
-    tree = javalang.parse.parse(source)
+    try:
+        tree = javalang.parse.parse(source)
+    except javalang.parser.JavaSyntaxError:
+        record = re.search(
+            r"\b(?:public\s+)?record\s+([A-Za-z_$][\w$]*)\s*\(([^)]*)\)",
+            source,
+        )
+        if record is None:
+            raise
+        package_match = re.search(r"\bpackage\s+([\w.]+)\s*;", source)
+        imports = re.findall(r"\bimport\s+(?:static\s+)?([\w.$]+)\s*;", source)
+        fields = []
+        for component in record.group(2).split(","):
+            component = component.strip()
+            if not component:
+                continue
+            match = re.match(r"(.+?)\s+([A-Za-z_$][\w$]*)$", component)
+            if match:
+                fields.append({
+                    "name": match.group(2),
+                    "type": match.group(1).strip(),
+                    "modifiers": [],
+                })
+        return JavaClass(
+            source_path=path,
+            package=package_match.group(1) if package_match else "",
+            name=record.group(1),
+            annotations=[],
+            fields=fields,
+            methods=[],
+            source=source,
+            imports=imports,
+            kind="record",
+        )
     package = tree.package.name if tree.package else ""
     declaration = next(
         (node for node in tree.types if isinstance(node, (javalang.tree.ClassDeclaration,
@@ -86,6 +121,7 @@ def parse_java_file(path: Path) -> JavaClass:
         methods=methods,
         source=source,
         imports=[import_node.path for import_node in tree.imports],
+        kind="class",
     )
 
 
